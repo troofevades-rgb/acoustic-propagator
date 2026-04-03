@@ -1,0 +1,17 @@
+{
+  "name": "acoustic-propagator",
+  "version": "1.0.0",
+  "description": "3D acoustic propagation visualizer with Google Photorealistic Tiles and spatial audio",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "dependencies": {
+    "cesium": "^1.121.0",
+    "electron-store": "^10.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
