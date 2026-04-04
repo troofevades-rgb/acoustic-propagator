@@ -1,5 +1,8 @@
 node_modules/
 dist/
+dist-electron/
 out/
+public/cesium/
 .env
 *.log
+{src,assets}/

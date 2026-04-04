@@ -1,17 +1,23 @@
 {
   "name": "acoustic-propagator",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "3D acoustic propagation visualizer with Google Photorealistic Tiles and spatial audio",
-  "main": "main.js",
+  "main": "dist-electron/main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "electron dist-electron/main.js"
   },
   "dependencies": {
     "cesium": "^1.121.0",
     "electron-store": "^10.0.0"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "vite": "^5.4.0",
+    "vite-plugin-electron": "^0.28.0",
+    "vite-plugin-electron-renderer": "^0.14.0",
+    "vite-plugin-static-copy": "^1.0.0"
   }
 }

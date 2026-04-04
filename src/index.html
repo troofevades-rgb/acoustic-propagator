@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Acoustic Propagator</title>
 
-  <!-- CesiumJS -->
-  <script src="../node_modules/cesium/Build/Cesium/Cesium.js"></script>
-  <link rel="stylesheet" href="../node_modules/cesium/Build/Cesium/Widgets/widgets.css">
+  <!-- CesiumJS loaded globally from public/cesium -->
+  <script src="/cesium/Cesium.js"></script>
+  <link rel="stylesheet" href="/cesium/Widgets/widgets.css">
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -197,6 +197,7 @@
       background: var(--source);
       box-shadow: 0 0 8px var(--source);
       transition: left 0.05s linear;
+      z-index: 5;
     }
 
     .timeline-controls {
@@ -330,6 +331,18 @@
       accent-color: var(--accent);
     }
 
+    select {
+      background: #0d1220;
+      color: var(--bright);
+      border: 1px solid var(--dim);
+      border-radius: 2px;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-family: var(--font);
+    }
+
+    select:focus { outline: none; border-color: var(--accent); }
+
     /* ─── Crosshair ─── */
     #crosshair {
       position: absolute;
@@ -341,9 +354,7 @@
       transition: opacity 0.3s;
     }
 
-    #crosshair.visible {
-      opacity: 0.5;
-    }
+    #crosshair.visible { opacity: 0.5; }
 
     #crosshair::before, #crosshair::after {
       content: '';
@@ -351,15 +362,8 @@
       background: var(--accent);
     }
 
-    #crosshair::before {
-      width: 1px; height: 100%;
-      left: 50%;
-    }
-
-    #crosshair::after {
-      width: 100%; height: 1px;
-      top: 50%;
-    }
+    #crosshair::before { width: 1px; height: 100%; left: 50%; }
+    #crosshair::after { width: 100%; height: 1px; top: 50%; }
 
     /* ─── Watermark ─── */
     #watermark {
@@ -370,6 +374,188 @@
       color: var(--dim);
       letter-spacing: 1px;
       opacity: 0.5;
+    }
+
+    /* ─── Keyboard hints ─── */
+    #keyhints {
+      position: absolute;
+      bottom: 430px;
+      left: 16px;
+      font-size: 8px;
+      color: var(--dim);
+      letter-spacing: 0.5px;
+      opacity: 0.4;
+      line-height: 1.6;
+    }
+
+    /* ─── Compass Wheel ─── */
+    #compass {
+      position: absolute;
+      bottom: 120px;
+      right: 20px;
+      width: 80px;
+      height: 80px;
+      cursor: grab;
+      z-index: 15;
+      user-select: none;
+    }
+
+    #compass:active { cursor: grabbing; }
+
+    #compass svg {
+      width: 100%;
+      height: 100%;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+    }
+
+    #compass-ring {
+      transition: transform 0.1s ease-out;
+    }
+
+    #compass-north {
+      cursor: pointer;
+    }
+
+    #compass-north:hover {
+      filter: brightness(1.4);
+    }
+
+    /* ─── Tilt slider ─── */
+    #tilt-control {
+      position: absolute;
+      bottom: 120px;
+      right: 108px;
+      width: 24px;
+      height: 80px;
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    #tilt-control button {
+      width: 24px;
+      height: 24px;
+      background: var(--panel);
+      border: 1px solid var(--dim);
+      border-radius: 3px;
+      color: var(--bright);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+    }
+
+    #tilt-control button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    #tilt-label {
+      font-size: 7px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+
+    /* ─── Zoom buttons ─── */
+    #zoom-control {
+      position: absolute;
+      bottom: 210px;
+      right: 20px;
+      width: 32px;
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    #zoom-control button {
+      width: 32px;
+      height: 32px;
+      background: var(--panel);
+      border: 1px solid var(--dim);
+      color: var(--bright);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+    }
+
+    #zoom-control button:first-child { border-radius: 4px 4px 0 0; }
+    #zoom-control button:last-child { border-radius: 0 0 4px 4px; }
+
+    #zoom-control button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ─── DOA Radar Overlay ─── */
+    #doa-overlay {
+      position: absolute;
+      bottom: 116px;
+      left: 12px;
+      width: 224px;
+      background: rgba(10, 14, 23, 0.92);
+      border: 1px solid var(--dim);
+      border-radius: 6px;
+      padding: 8px 2px 6px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      pointer-events: auto;
+      user-select: none;
+    }
+
+    .doa-overlay-title {
+      color: var(--bright);
+      font-size: 9px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      text-align: center;
+      width: 100%;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--dim);
+    }
+
+    #doa-overlay-canvas {
+      display: block;
+    }
+
+    .doa-overlay-readout {
+      width: 100%;
+      padding: 4px 12px 0;
+      border-top: 1px solid var(--dim);
+      margin-top: 4px;
+    }
+
+    .doa-readout-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      line-height: 1.7;
+      font-size: 11px;
+    }
+
+    .doa-readout-label {
+      color: var(--dim);
+      font-size: 9px;
+      letter-spacing: 1.5px;
+    }
+
+    .doa-readout-value {
+      color: var(--bright);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      font-family: var(--font);
     }
   </style>
 </head>
@@ -387,7 +573,7 @@
       </div>
       <div class="btn-group">
         <button class="btn btn-sm selected" id="btnOverview" onclick="setView('overview')">OVERVIEW</button>
-        <button class="btn btn-sm" id="btnFPV" onclick="setView('fpv')">FPV</button>
+        <button class="btn btn-sm" id="btnFpv" onclick="setView('fpv')">FPV</button>
         <button class="btn btn-sm" id="btnTop" onclick="setView('top')">TOP</button>
         <button class="btn btn-sm" id="btnOrbit" onclick="setView('orbit')">ORBIT</button>
       </div>
@@ -395,32 +581,21 @@
 
     <!-- Controls -->
     <div id="controls-panel" class="panel">
-      <div class="panel-title">POSITIONS (WGS84)</div>
-
-      <div class="row">
-        <div class="dot" style="background: var(--source)"></div>
-        <span class="tag source-color">SRC</span>
-        <span>Lat</span>
-        <input class="coord-input" type="number" step="0.00001" id="srcLat" value="40.27750">
-        <span>Lon</span>
-        <input class="coord-input" type="number" step="0.00001" id="srcLon" value="-111.71380">
-      </div>
+      <div class="panel-title">LISTENER POSITION (WGS84)</div>
 
       <div class="row">
         <div class="dot" style="background: var(--accent)"></div>
         <span class="tag accent">MIC</span>
         <span>Lat</span>
-        <input class="coord-input" type="number" step="0.00001" id="micLat" value="40.27760">
+        <input class="coord-input" type="number" step="0.00001" id="micLat" value="40.2776602">
         <span>Lon</span>
-        <input class="coord-input" type="number" step="0.00001" id="micLon" value="-111.71360">
+        <input class="coord-input" type="number" step="0.00001" id="micLon" value="-111.7140867">
       </div>
 
       <div class="row" style="margin-top: 4px;">
-        <span class="dim" style="font-size: 9px;">Heights above ground (m):</span>
-        <span>SRC</span>
-        <input class="coord-input" type="number" step="0.1" id="srcHeight" value="2.0" style="width:50px">
+        <span class="dim" style="font-size: 9px;">Height above ground (m):</span>
         <span>MIC</span>
-        <input class="coord-input" type="number" step="0.1" id="micHeight" value="1.5" style="width:50px">
+        <input class="coord-input" type="number" step="0.1" id="micHeight" value="1.0" style="width:50px">
       </div>
 
       <div class="section">
@@ -436,10 +611,23 @@
       </div>
 
       <div class="section">
+        <div class="section-label">REFLECTIONS</div>
+        <div class="row">
+          <span>Mode</span>
+          <select id="reflectionMode">
+            <option value="auto">Auto (ray-traced)</option>
+            <option value="manual">Manual planes</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section">
         <div class="section-label">LAYERS</div>
         <label class="toggle-row"><input type="checkbox" id="chkWaves" checked> Wavefronts</label>
         <label class="toggle-row"><input type="checkbox" id="chkReflections" checked> Reflections</label>
         <label class="toggle-row"><input type="checkbox" id="chkPaths" checked> Ray paths</label>
+        <label class="toggle-row"><input type="checkbox" id="chkParticles" checked> Particles</label>
+        <label class="toggle-row"><input type="checkbox" id="chkDOA" checked> DOA arrow</label>
         <label class="toggle-row"><input type="checkbox" id="chkAudio"> Spatial audio playback</label>
       </div>
 
@@ -450,57 +638,107 @@
         </button>
         <div id="wavInfo" style="margin-top: 6px; font-size: 10px; color: var(--dim);"></div>
       </div>
+
+      <div class="section">
+        <div class="section-label">SESSION</div>
+        <div class="row" style="gap: 4px;">
+          <button class="btn btn-sm" id="btnExportSession">EXPORT</button>
+          <button class="btn btn-sm" id="btnImportSession">IMPORT</button>
+          <button class="btn btn-sm" id="btnRecord" style="border-color: var(--source); color: var(--source);">REC</button>
+          <button class="btn btn-sm" id="btnClearConfig" style="border-color: var(--dim); color: var(--text);" title="Reset all settings to defaults">RESET</button>
+        </div>
+      </div>
     </div>
 
     <!-- Stats -->
     <div id="stats-panel" class="panel">
-      <div class="panel-title">PROPAGATION</div>
-      <div id="directStats">—</div>
-      <div class="section" id="reflectionStats">
-        <div class="section-label">REFLECTIONS</div>
-        <div id="reflectionList">—</div>
+      <div class="panel-title">AUDIO ANALYSIS</div>
+      <div id="directStats" style="font-size: 10px;">Load a spatial audio WAV to analyze direction of arrival</div>
+      <div class="section" id="doaStats">
+        <div class="section-label">DIRECTION OF ARRIVAL</div>
+        <div id="doaDisplay">—</div>
       </div>
     </div>
 
     <!-- Crosshair for FPV -->
     <div id="crosshair"></div>
 
+    <!-- Keyboard hints -->
+    <div id="keyhints">
+      SPACE propagate · R reset · 1-4 views · M marker · Ctrl+Shift+S screenshot
+    </div>
+
+    <!-- Zoom buttons -->
+    <div id="zoom-control">
+      <button id="btnZoomIn" title="Zoom in">+</button>
+      <button id="btnZoomOut" title="Zoom out">−</button>
+    </div>
+
+    <!-- Tilt control -->
+    <div id="tilt-control">
+      <button id="btnTiltUp" title="Tilt up">▲</button>
+      <span id="tilt-label">TILT</span>
+      <button id="btnTiltDown" title="Tilt down">▼</button>
+    </div>
+
+    <!-- Compass wheel -->
+    <div id="compass" title="Drag to rotate · Click N to reset north">
+      <svg viewBox="0 0 100 100" id="compass-svg">
+        <g id="compass-ring">
+          <!-- Outer ring -->
+          <circle cx="50" cy="50" r="38" fill="rgba(10,14,23,0.85)" stroke="#233554" stroke-width="1.5"/>
+          <!-- Tick marks -->
+          <line x1="50" y1="14" x2="50" y2="20" stroke="#8892b0" stroke-width="1"/>
+          <line x1="50" y1="80" x2="50" y2="86" stroke="#8892b0" stroke-width="0.5"/>
+          <line x1="14" y1="50" x2="20" y2="50" stroke="#8892b0" stroke-width="0.5"/>
+          <line x1="80" y1="50" x2="86" y2="50" stroke="#8892b0" stroke-width="0.5"/>
+          <!-- Cardinal labels -->
+          <text x="50" y="30" text-anchor="middle" fill="#ff3d71" font-size="11" font-weight="bold" font-family="monospace" id="compass-north" style="cursor:pointer">N</text>
+          <text x="50" y="76" text-anchor="middle" fill="#8892b0" font-size="8" font-family="monospace">S</text>
+          <text x="26" y="54" text-anchor="middle" fill="#8892b0" font-size="8" font-family="monospace">W</text>
+          <text x="74" y="54" text-anchor="middle" fill="#8892b0" font-size="8" font-family="monospace">E</text>
+          <!-- Center dot -->
+          <circle cx="50" cy="50" r="3" fill="#64ffda"/>
+          <!-- Heading indicator triangle -->
+          <polygon points="50,13 47,19 53,19" fill="#ff3d71" id="compass-needle"/>
+        </g>
+      </svg>
+    </div>
+
     <!-- Watermark -->
     <div id="watermark">NO BIAS · RAW PROPAGATION</div>
 
     <!-- Timeline -->
     <div id="timeline">
-      <div id="time-bar" onclick="seekTimeline(event)">
+      <div id="time-bar">
         <div id="arrivalMarkers"></div>
         <div id="playhead" style="left: 0%"></div>
       </div>
       <div class="timeline-controls">
         <div style="display: flex; align-items: center; gap: 12px;">
-          <button class="btn" id="btnPropagate" onclick="togglePropagation()">▶ PROPAGATE</button>
-          <button class="btn" onclick="resetSim()" style="border-color: var(--dim); color: var(--text);">↺ RESET</button>
+          <button class="btn" id="btnPropagate">▶ PLAY</button>
+          <button class="btn" id="btnReset" style="border-color: var(--dim); color: var(--text);">↺ RESET</button>
+          <button class="btn btn-sm" id="btnSpectrogram" style="border-color: var(--dim); color: var(--text);">SPECTROGRAM</button>
           <span style="font-size: 12px; color: var(--bright); font-variant-numeric: tabular-nums;">
-            <span id="simTimeDisplay">0.00</span> <span class="dim">ms</span>
+            <span id="simTimeDisplay">0.000</span> <span class="dim">s</span>
+            /
+            <span id="durationDisplay">0.000</span> <span class="dim">s</span>
           </span>
         </div>
         <div style="display: flex; align-items: center; gap: 16px;">
           <label style="font-size: 9px; letter-spacing: 1px; display: flex; align-items: center; gap: 6px;">
-            SPEED
-            <input class="range-input" type="range" min="0.005" max="0.5" step="0.005" value="0.08" id="speedSlider" oninput="updateSpeed()">
-            <span class="range-value" id="speedValue">0.08×</span>
-          </label>
-          <label style="font-size: 9px; letter-spacing: 1px; display: flex; align-items: center; gap: 6px;">
-            WINDOW
-            <input class="range-input" type="range" min="20" max="500" step="10" value="150" id="windowSlider" oninput="updateWindow()">
-            <span class="range-value" id="windowValue">150ms</span>
+            VOL
+            <input class="range-input" type="range" min="0" max="100" step="1" value="80" id="volumeSlider">
+            <span class="range-value" id="volumeValue">80%</span>
           </label>
         </div>
         <div style="font-size: 9px; color: var(--dim); letter-spacing: 1px;">
-          NO BIAS · RAW PROPAGATION MODEL
+          SPATIAL AUDIO ANALYSIS
         </div>
       </div>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
