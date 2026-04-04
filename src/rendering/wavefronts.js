@@ -20,12 +20,19 @@ import {
 export function initWavefrontPools(viewer) {
   const pools = state.pools;
 
+  // Dummy positions — Cesium corrupts entity rendering if polylines are
+  // created with positions: [].  Two-point stub avoids this.
+  const stub = [
+    Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat),
+    Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat),
+  ];
+
   // Direct wavefront ring pool
   for (let i = 0; i < pools.maxWavefrontRings; i++) {
     const entity = viewer.entities.add({
       show: false,
       polyline: {
-        positions: [],
+        positions: stub,
         width: 3,
         material: new Cesium.PolylineGlowMaterialProperty({
           glowPower: 0.4,
@@ -42,7 +49,7 @@ export function initWavefrontPools(viewer) {
     const entity = viewer.entities.add({
       show: false,
       polyline: {
-        positions: [],
+        positions: stub,
         width: 2,
         material: new Cesium.PolylineGlowMaterialProperty({
           glowPower: 0.3,
@@ -59,7 +66,7 @@ export function initWavefrontPools(viewer) {
     const entity = viewer.entities.add({
       show: false,
       polyline: {
-        positions: [],
+        positions: stub,
         width: 1.5,
         material: new Cesium.PolylineGlowMaterialProperty({
           glowPower: 0.2,

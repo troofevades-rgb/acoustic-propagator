@@ -38,19 +38,6 @@ export function createMarkerEntities(viewer) {
     },
   });
 
-  // DOA arrow — shows where the audio says sound came from
-  // Uses solid color + clampToGround + ClassificationType.BOTH to drape on 3D tiles
-  // (PolylineGlowMaterialProperty is NOT supported for ground-clamped polylines)
-  state.entities.doaArrow = viewer.entities.add({
-    show: false,
-    polyline: {
-      positions: [],
-      width: 4,
-      material: Cesium.Color.YELLOW.withAlpha(0.8),
-      clampToGround: true,
-      classificationType: Cesium.ClassificationType.BOTH,
-    },
-  });
 }
 
 /**

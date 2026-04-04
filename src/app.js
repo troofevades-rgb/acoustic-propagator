@@ -10,12 +10,12 @@ import { initCesium } from './core/cesium-init.js';
 import { state, getSerializableState, restoreState } from './core/state.js';
 import { computeSpeedOfSound } from './core/physics.js';
 import { parseWav } from './core/wav-parser.js';
-import { computeDOATrack } from './core/ambisonics.js';
+import { computeDOATrack, ambiXToCompass } from './core/ambisonics.js';
 import { SpatialAudioEngine } from './core/spatial-audio.js';
 import { initWavefrontPools, renderWavefronts } from './rendering/wavefronts.js';
 import { initParticleSystem, updateParticles, updateParticlePosition } from './rendering/particles.js';
 import { createMarkerEntities, updateMarkerPositions, updateDOAArrow } from './rendering/annotations.js';
-import { updateStatsDisplay, updateDOADisplay, updateSosDisplay, showWavInfo, showWavError, syncUIWithState } from './ui/hud.js';
+import { updateStatsDisplay, updateDOADisplay, updateSosDisplay, showWavInfo, showWavError, syncUIWithState } from './rendering/ui/hud.js';
 import {
   initTimeline,
   renderWaveform,
@@ -23,14 +23,14 @@ import {
   updateTimelineUI,
   seekTimeline,
   toggleSpectrogramMode,
-} from './ui/timeline.js';
-import { bindInputs, setControlCallbacks, setView } from './ui/controls.js';
+} from './rendering/ui/timeline.js';
+import { bindInputs, setControlCallbacks, setView } from './rendering/ui/controls.js';
 import { exportSession, startRecording, stopRecording } from './core/export.js';
-import { initCompass } from './ui/compass.js';
-import { initMarkerDrag } from './ui/marker-drag.js';
+import { initCompass } from './rendering/ui/compass.js';
+import { initMarkerDrag } from './rendering/ui/marker-drag.js';
 import { createSceneMarkers } from './rendering/scene-markers.js';
 import { initDOAVisuals, updateDOAVisuals, hideAll as hideDOAVisuals, clearDOATrail } from './rendering/doa-visuals.js';
-import { initDOAOverlay, updateDOAOverlay, hideDOAOverlay, clearDOAOverlayTrail } from './ui/doa-overlay.js';
+import { initDOAOverlay, updateDOAOverlay, hideDOAOverlay, clearDOAOverlayTrail } from './rendering/ui/doa-overlay.js';
 
 // ─── Audio engine ───
 const audioEngine = new SpatialAudioEngine();
@@ -54,10 +54,12 @@ async function init() {
     }
   }
 
-  // Safeguard: ensure critical visual layers default to ON regardless of
-  // persisted config. A stale config file could have these set to false from
-  // a previous session, causing DOA arrows / wavefronts / paths to vanish
-  // on startup with no obvious way for the user to recover.
+  // Safeguard: force listener to Mic 7 position (stale config may have wrong coords)
+  state.listener.lat = 40.2776602;
+  state.listener.lon = -111.7140867;
+  state.listener.height = 1.0;
+
+  // Ensure critical visual layers default to ON
   state.showDOA = true;
   state.showWaves = true;
   state.showPaths = true;
@@ -89,7 +91,9 @@ async function init() {
   createSceneMarkers(viewer);
 
   // Visual systems
-  initWavefrontPools(viewer);
+  // initWavefrontPools — DISABLED: creates 90 pooled entities that corrupt
+  // Cesium's rendering pipeline for all entities added afterward.
+  // renderWavefronts() is never called, so the pool is unused.
   initDOAVisuals(viewer);
   initParticleSystem(viewer);
   initCompass(viewer);
@@ -166,10 +170,8 @@ function startAnimationLoop() {
           // 2D radar overlay — pure canvas, no Cesium entities
           updateDOAOverlay(doa.azimuth, doa.elevation, doa.energy, state.simTime);
 
-          // HUD numbers — show world-corrected compass bearing
-          const deviceHeading = 241.3; // from PA calibration
-          const compassBearing = deviceHeading - (doa.azimuth * 180) / Math.PI;
-          const normalizedBearing = ((compassBearing % 360) + 360) % 360;
+          // HUD numbers — compass bearing via time-varying heading
+          const normalizedBearing = ambiXToCompass(doa.azimuth, state.simTime);
           updateDOADisplay(
             normalizedBearing,
             (doa.elevation * 180) / Math.PI,
@@ -312,10 +314,41 @@ async function handleLoadWav() {
     if (chkAudio) chkAudio.checked = true;
     state.spatialAudioEnabled = true;
 
+    // Validate WAV channel ordering (first 1 second)
+    if (wav.numChannels >= 4) {
+      const oneSecSamples = Math.min(wav.sampleRate, wav.channels[0].length);
+      const channelLabels = ['W(omni)', 'Y(side)', 'Z(height)', 'X(front)'];
+      const rmsValues = wav.channels.slice(0, 4).map((ch, i) => {
+        let sum = 0;
+        for (let s = 0; s < oneSecSamples; s++) sum += ch[s] * ch[s];
+        const rms = Math.sqrt(sum / oneSecSamples);
+        return { label: channelLabels[i], rms };
+      });
+      console.log('[WAV] Per-channel RMS (first 1s):', rmsValues.map(v => `${v.label}=${v.rms.toFixed(6)}`).join(', '));
+      const wRms = rmsValues[0].rms;
+      const maxOther = Math.max(rmsValues[1].rms, rmsValues[2].rms, rmsValues[3].rms);
+      if (wRms < maxOther) {
+        console.warn('[WAV] WARNING: W(omni) is NOT the highest RMS channel — channel ordering may be wrong!');
+      } else {
+        console.log('[WAV] Channel ordering OK: W(omni) has highest RMS');
+      }
+    }
+
     // Compute DOA track if 4-channel B-format
     if (wav.numChannels >= 4) {
       doaTrack = computeDOATrack(wav.channels, wav.sampleRate);
       console.log('DOA track computed:', doaTrack.length, 'frames');
+
+      // Log DOA track statistics
+      if (doaTrack.length > 0) {
+        const azimuths = doaTrack.map(d => d.azimuth * 180 / Math.PI);
+        const energies = doaTrack.map(d => d.energy);
+        const peakIdx = energies.indexOf(Math.max(...energies));
+        const peakDoa = doaTrack[peakIdx];
+        const peakCompass = ambiXToCompass(peakDoa.azimuth, peakDoa.time);
+        console.log(`[DOA] Azimuth range: ${Math.min(...azimuths).toFixed(1)}° to ${Math.max(...azimuths).toFixed(1)}°`);
+        console.log(`[DOA] Peak energy at t=${peakDoa.time.toFixed(2)}s, compass bearing=${peakCompass.toFixed(1)}°`);
+      }
 
       const doaDisplay = document.getElementById('doaDisplay');
       if (doaDisplay) {
@@ -443,75 +476,7 @@ async function clearConfig() {
   }
 }
 
-// ─── Standalone DOA polyline test ───
-// 10 seconds after init, create a yellow ground-clamped polyline from the
-// listener going 30 m due north.  No audio needed.  If this line appears on
-// the map the entity-creation pattern is fine; if it doesn't, something
-// about post-init entity creation is broken.
-function schedulePolylineTest() {
-  setTimeout(() => {
-    const Cesium = window.Cesium;
-    const viewer = state.viewer;
-    if (!viewer) {
-      console.error('[TEST] No viewer available — aborting polyline test');
-      return;
-    }
-
-    const LAT_DEG_PER_M = 1 / 111320;
-    const baseLon = state.listener.lon;
-    const baseLat = state.listener.lat;
-
-    // 21 positions from listener to 30 m north
-    const positions = [];
-    for (let i = 0; i <= 20; i++) {
-      const northM = (i / 20) * 30;
-      positions.push(
-        Cesium.Cartesian3.fromDegrees(baseLon, baseLat + northM * LAT_DEG_PER_M)
-      );
-    }
-
-    try {
-      const testEntity = viewer.entities.add({
-        polyline: {
-          positions: positions,
-          width: 6,
-          material: Cesium.Color.YELLOW.withAlpha(1.0),
-          clampToGround: true,
-          classificationType: Cesium.ClassificationType.BOTH,
-        },
-      });
-
-      const testLabel = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(baseLon, baseLat + 30 * LAT_DEG_PER_M),
-        label: {
-          text: 'TEST 30m N',
-          font: 'bold 14px monospace',
-          fillColor: Cesium.Color.YELLOW,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 4,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          pixelOffset: new Cesium.Cartesian2(0, -20),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        },
-      });
-
-      console.log(
-        '[TEST] Yellow test polyline created at t+10s. ' +
-        'Entity count after add: ' + viewer.entities.values.length + '. ' +
-        'Line entity: ' + !!testEntity + ', Label entity: ' + !!testLabel + '. ' +
-        'Start: (' + baseLat.toFixed(7) + ', ' + baseLon.toFixed(7) + ') ' +
-        'End: (' + (baseLat + 30 * LAT_DEG_PER_M).toFixed(7) + ', ' + baseLon.toFixed(7) + ')'
-      );
-    } catch (e) {
-      console.error('[TEST] Failed to create test polyline:', e);
-    }
-  }, 10000);
-}
-
 // ─── Boot ───
 document.addEventListener('DOMContentLoaded', () => {
-  init().then(() => {
-    schedulePolylineTest();
-  }).catch(console.error);
+  init().catch(console.error);
 });
