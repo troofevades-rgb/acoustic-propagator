@@ -348,7 +348,11 @@ function drawBandLegend(bands) {
   bearingCtx.strokeStyle = 'rgba(35, 53, 84, 0.8)';
   bearingCtx.lineWidth = 1;
   bearingCtx.beginPath();
-  bearingCtx.roundRect(x, y, boxW, boxH, 4);
+  if (bearingCtx.roundRect) {
+    bearingCtx.roundRect(x, y, boxW, boxH, 4);
+  } else {
+    bearingCtx.rect(x, y, boxW, boxH);
+  }
   bearingCtx.fill();
   bearingCtx.stroke();
 

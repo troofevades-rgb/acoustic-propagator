@@ -176,7 +176,7 @@ function startAnimationLoop() {
         // Lerp per-band azimuths
         const bands = {};
         for (const name of ['low', 'mid', 'high']) {
-          const b0 = d0[name], b1 = d1[name];
+          const b0 = d0.bands && d0.bands[name], b1 = d1.bands && d1.bands[name];
           if (b0 && b1) {
             let bAzDiff = b1.azimuth - b0.azimuth;
             if (bAzDiff > Math.PI) bAzDiff -= 2 * Math.PI;
