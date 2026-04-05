@@ -152,30 +152,50 @@ function startAnimationLoop() {
     if (audioEngine.isPlaying) {
       state.simTime = audioEngine.getCurrentTime();
 
-      // Update DOA visuals from pre-computed DOA track
+      // Update DOA visuals — interpolate between pre-computed multi-band DOA frames
       if (doaTrack && doaTrack.length > 0 && state.wavData) {
         const frac = state.simTime / state.wavData.duration;
-        const trackIdx = Math.min(
-          Math.floor(frac * doaTrack.length),
-          doaTrack.length - 1
-        );
-        if (trackIdx >= 0) {
-          const doa = doaTrack[trackIdx];
+        const exactIdx = frac * doaTrack.length;
+        const idx0 = Math.min(Math.floor(exactIdx), doaTrack.length - 1);
+        const idx1 = Math.min(idx0 + 1, doaTrack.length - 1);
+        const t = exactIdx - idx0;
 
-          updateDOAArrow(doa.azimuth, doa.elevation, doa.energy);
+        const d0 = doaTrack[idx0];
+        const d1 = doaTrack[idx1];
 
-          // Incoming wavefront arcs, energy ring, trail
-          updateDOAVisuals(state.viewer, doa.azimuth, doa.elevation, doa.energy, state.simTime);
+        // Lerp raw azimuth/elevation/energy
+        let azDiff = d1.azimuth - d0.azimuth;
+        if (azDiff > Math.PI) azDiff -= 2 * Math.PI;
+        if (azDiff < -Math.PI) azDiff += 2 * Math.PI;
+        const azimuth = d0.azimuth + azDiff * t;
+        const elevation = d0.elevation + (d1.elevation - d0.elevation) * t;
+        const energy = d0.energy + (d1.energy - d0.energy) * t;
 
-          // 2D radar overlay — pure canvas, no Cesium entities
-          updateDOAOverlay(doa.azimuth, doa.elevation, doa.energy, state.simTime);
+        // Lerp per-band azimuths
+        const bands = {};
+        for (const name of ['low', 'mid', 'high']) {
+          const b0 = d0[name], b1 = d1[name];
+          if (b0 && b1) {
+            let bAzDiff = b1.azimuth - b0.azimuth;
+            if (bAzDiff > Math.PI) bAzDiff -= 2 * Math.PI;
+            if (bAzDiff < -Math.PI) bAzDiff += 2 * Math.PI;
+            bands[name] = {
+              azimuth: b0.azimuth + bAzDiff * t,
+              energy: b0.energy + (b1.energy - b0.energy) * t,
+            };
+          }
+        }
 
-          // HUD numbers — compass bearing via time-varying heading
-          const normalizedBearing = ambiXToCompass(doa.azimuth, state.simTime);
+        if (idx0 >= 0) {
+          updateDOAArrow(azimuth, elevation, energy);
+          updateDOAVisuals(state.viewer, azimuth, elevation, energy, state.simTime, bands);
+          updateDOAOverlay(azimuth, elevation, energy, state.simTime);
+
+          const normalizedBearing = ambiXToCompass(azimuth, state.simTime);
           updateDOADisplay(
             normalizedBearing,
-            (doa.elevation * 180) / Math.PI,
-            doa.energy
+            (elevation * 180) / Math.PI,
+            energy
           );
         }
       } else {
@@ -339,14 +359,18 @@ async function handleLoadWav() {
       doaTrack = computeDOATrack(wav.channels, wav.sampleRate);
       console.log('DOA track computed:', doaTrack.length, 'frames');
 
-      // Log DOA track statistics
+      // Log DOA track statistics (loop-based to avoid stack overflow on large tracks)
       if (doaTrack.length > 0) {
-        const azimuths = doaTrack.map(d => d.azimuth * 180 / Math.PI);
-        const energies = doaTrack.map(d => d.energy);
-        const peakIdx = energies.indexOf(Math.max(...energies));
+        let minAz = Infinity, maxAz = -Infinity, maxE = 0, peakIdx = 0;
+        for (let i = 0; i < doaTrack.length; i++) {
+          const azDeg = doaTrack[i].azimuth * 180 / Math.PI;
+          if (azDeg < minAz) minAz = azDeg;
+          if (azDeg > maxAz) maxAz = azDeg;
+          if (doaTrack[i].energy > maxE) { maxE = doaTrack[i].energy; peakIdx = i; }
+        }
         const peakDoa = doaTrack[peakIdx];
         const peakCompass = ambiXToCompass(peakDoa.azimuth, peakDoa.time);
-        console.log(`[DOA] Azimuth range: ${Math.min(...azimuths).toFixed(1)}° to ${Math.max(...azimuths).toFixed(1)}°`);
+        console.log(`[DOA] Azimuth range: ${minAz.toFixed(1)}° to ${maxAz.toFixed(1)}°`);
         console.log(`[DOA] Peak energy at t=${peakDoa.time.toFixed(2)}s, compass bearing=${peakCompass.toFixed(1)}°`);
       }
 

@@ -75,6 +75,33 @@ export function initDOAOverlay() {
   cy = canvas.height / 2;
   radius = (Math.min(canvas.width, canvas.height) / 2) - 16;
 
+  // ─── Make draggable by title bar ───
+  const titleBar = overlayRoot.querySelector('.doa-overlay-title');
+  titleBar.style.cursor = 'grab';
+  let dragging = false, dragX = 0, dragY = 0;
+
+  titleBar.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    titleBar.style.cursor = 'grabbing';
+    dragX = e.clientX - overlayRoot.offsetLeft;
+    dragY = e.clientY - overlayRoot.offsetTop;
+    titleBar.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  titleBar.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    overlayRoot.style.left = (e.clientX - dragX) + 'px';
+    overlayRoot.style.top = (e.clientY - dragY) + 'px';
+    overlayRoot.style.bottom = 'auto';
+    overlayRoot.style.right = 'auto';
+  });
+
+  titleBar.addEventListener('pointerup', () => {
+    dragging = false;
+    titleBar.style.cursor = 'grab';
+  });
+
   if (state.viewer && state.viewer.scene) {
     state.viewer.scene.postRender.addEventListener(() => drawFrame());
   } else {

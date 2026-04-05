@@ -1,9 +1,12 @@
 /**
- * DOA Map Visuals — Energy-driven bearing indicator, trail, wavefront arcs
+ * DOA Map Visuals — Screen-space bearing line + entity-based trail dots
  *
- * Bearing:     tight row of pre-created dots (fast updates, proven to render)
- * Trail:       accumulating dots showing DOA history, colored by energy
- * Arcs:        dot-based expanding arcs on energy spikes
+ * The bearing line is drawn as a 2D canvas overlay on top of the Cesium viewer
+ * using SceneTransforms.wgs84ToWindowCoordinates. This bypasses all entity
+ * rendering issues with Google 3D Tiles.
+ *
+ * Trail dots remain as pre-created Cesium point entities (ring buffer).
+ * Band indicators flash during transient events.
  *
  * Color: yellow (ambient) → orange (speech) → red (blast)
  */
@@ -17,36 +20,27 @@ const LAT_DEG_PER_METER = 1 / 111320;
 const LON_DEG_PER_METER = 1 / (111320 * Math.cos(40.277 * Math.PI / 180));
 
 // ─── Bearing config ───
-const BEARING_DOTS = 8;
 const BEARING_LEN_MIN = 10;
-const BEARING_LEN_MAX = 20;
-const BEARING_SIZE_BASE = 12;   // px at base (large, distinct)
-const BEARING_SIZE_TIP = 5;     // px at tip
+const BEARING_LEN_MAX = 22;
+const BEARING_WIDTH_MIN = 2;
+const BEARING_WIDTH_MAX = 6;
 
 // ─── Trail config ───
 const TRAIL_DIST_MIN = 3;
 const TRAIL_DIST_MAX = 14;
-const MAX_TRAIL = 400;
+const MAX_TRAIL = 300;
 const TRAIL_INTERVAL = 0.08;
-
-// ─── Arc config ───
-const ARC_ANGULAR_WIDTH = 50;
-const ARC_MAX_RADIUS = 35;
-const ARC_LIFETIME = 1.2;
-const MAX_ARCS = 12;
-const ARC_ENERGY_THRESHOLD = 0.35;
-const ARC_COOLDOWN = 0.15;
 
 // ─── State ───
 let _viewer = null;
-let bearingDots = [];
-let bearingLabelEntity = null;
-let doaTrailPoints = [];
+let bearingCanvas = null;
+let bearingCtx = null;
+let trailDots = [];
+let trailIdx = 0;
+let trailInited = false;
 let lastTrailTime = -1;
-let lastUpdateTime = -1;
-let lastArcTime = -1;
-let activeArcs = [];
 let prevEnergy = 0;
+let currentBearing = { dirE: 0, dirN: 0, compass: 0, ve: 0, active: false };
 
 function groundPos(eastM, northM) {
   return Cesium.Cartesian3.fromDegrees(
@@ -58,18 +52,31 @@ function groundPos(eastM, northM) {
 function energyColor(e) {
   if (e < 0.4) {
     const t = e / 0.4;
-    return new Cesium.Color(1.0, 1.0, 0.2 - t * 0.1, 0.3 + t * 0.3);
+    return `rgba(255, 255, ${50 - t * 25}, ${0.3 + t * 0.4})`;
   } else if (e < 0.7) {
     const t = (e - 0.4) / 0.3;
-    return new Cesium.Color(1.0, 1.0 - t * 0.35, 0.1 - t * 0.1, 0.5 + t * 0.2);
+    return `rgba(255, ${255 - t * 90}, ${25 - t * 25}, ${0.6 + t * 0.2})`;
   } else {
     const t = (e - 0.7) / 0.3;
-    return new Cesium.Color(1.0, 0.65 - t * 0.5, 0.0, 0.7 + t * 0.2);
+    return `rgba(255, ${165 - t * 130}, 0, ${0.8 + t * 0.2})`;
+  }
+}
+
+function energyColorCesium(e) {
+  if (e < 0.4) {
+    const t = e / 0.4;
+    return new Cesium.Color(1, 1, 0.2 - t * 0.1, 0.3 + t * 0.3);
+  } else if (e < 0.7) {
+    const t = (e - 0.4) / 0.3;
+    return new Cesium.Color(1, 1 - t * 0.35, 0.1 - t * 0.1, 0.5 + t * 0.2);
+  } else {
+    const t = (e - 0.7) / 0.3;
+    return new Cesium.Color(1, 0.65 - t * 0.5, 0, 0.7 + t * 0.2);
   }
 }
 
 function trailColor(e) {
-  const c = energyColor(e);
+  const c = energyColorCesium(e);
   return c.withAlpha(c.alpha * 0.6);
 }
 
@@ -77,181 +84,199 @@ function trailColor(e) {
 
 export function initDOAVisuals(viewer) {
   _viewer = viewer;
+  const listenerPos = Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat);
 
-  // Pre-create bearing dots — outlined for visibility against tiles
-  for (let i = 0; i < BEARING_DOTS; i++) {
-    bearingDots.push(viewer.entities.add({
+  // Create transparent canvas overlay for the bearing line
+  // Appended to body (not cesiumContainer — Cesium manages that div's children)
+  bearingCanvas = document.createElement('canvas');
+  bearingCanvas.id = 'doa-bearing-canvas';
+  bearingCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9;';
+  document.body.appendChild(bearingCanvas);
+  bearingCtx = bearingCanvas.getContext('2d');
+
+  // Match canvas resolution to viewport
+  function resizeCanvas() {
+    bearingCanvas.width = window.innerWidth;
+    bearingCanvas.height = window.innerHeight;
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  // Draw bearing on every Cesium render frame
+  viewer.scene.postRender.addEventListener(() => {
+    drawBearingLine();
+  });
+
+  // Pre-create trail ring buffer
+  for (let i = 0; i < MAX_TRAIL; i++) {
+    trailDots.push(viewer.entities.add({
       show: false,
-      position: Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat),
+      position: listenerPos,
       point: {
-        pixelSize: BEARING_SIZE_BASE,
-        color: Cesium.Color.YELLOW,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
+        pixelSize: 3,
+        color: Cesium.Color.YELLOW.withAlpha(0.3),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
       },
     }));
   }
+  trailInited = true;
 
-  bearingLabelEntity = viewer.entities.add({
-    show: false,
-    position: Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat),
-    label: {
-      text: '0\u00B0',
-      font: 'bold 13px JetBrains Mono, monospace',
-      fillColor: Cesium.Color.YELLOW,
-      outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 4,
-      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-      pixelOffset: new Cesium.Cartesian2(0, -14),
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-    },
-  });
-
-  console.log('[DOA-VIS] Initialized — ' + BEARING_DOTS + ' bearing dots pre-created');
+  console.log('[DOA-VIS] Initialized — canvas bearing line + ' + MAX_TRAIL + ' trail dots');
 }
 
 export function setCrackBlastEvents() {}
 
-export function updateDOAVisuals(viewer, azimuth, elevation, energy, time) {
+export function updateDOAVisuals(viewer, azimuth, elevation, energy, time, bands) {
   const ve = Math.min(1, Math.max(0, (Math.log10(energy + 1e-10) + 6) / 6));
-  const { east: dirE, north: dirN, compass: compassBearing } = ambiXToENU(azimuth, time);
+  const { east: dirE, north: dirN, compass } = ambiXToENU(azimuth, time);
 
   const energyJump = ve - prevEnergy;
-  const isTransient = energyJump > 0.15;
   prevEnergy = ve;
 
-  // Even at very low energy, keep bearing visible (just dim/small)
-  const lineLen = BEARING_LEN_MIN + ve * (BEARING_LEN_MAX - BEARING_LEN_MIN);
-  const color = energyColor(Math.max(0.05, ve)); // never fully transparent
+  // Store current bearing state for the canvas renderer
+  currentBearing = { dirE, dirN, compass, ve: Math.max(0.05, ve), active: state.showDOA, bands };
 
-  // ─── Bearing dots: update at ~20fps (smooth but not overwhelming Cesium) ───
-  if (state.showDOA && time - lastUpdateTime > 0.05) {
-    for (let i = 0; i < BEARING_DOTS; i++) {
-      const frac = (i + 1) / BEARING_DOTS;
-      const dist = frac * lineLen;
-      bearingDots[i].position = groundPos(dirE * dist, dirN * dist);
-
-      const size = BEARING_SIZE_BASE - frac * (BEARING_SIZE_BASE - BEARING_SIZE_TIP);
-      bearingDots[i].point.pixelSize = isTransient ? size * 1.5 : size;
-      bearingDots[i].point.color = color;
-      bearingDots[i].show = true;
-    }
-
-    bearingLabelEntity.position = groundPos(dirE * lineLen, dirN * lineLen);
-    bearingLabelEntity.label.text = compassBearing.toFixed(0) + '\u00B0';
-    bearingLabelEntity.label.fillColor = color;
-    bearingLabelEntity.show = true;
-
-    lastUpdateTime = time;
-  }
-
-  // ─── Wavefront arcs (dot-based) ───
-  if (state.showDOA && ve > ARC_ENERGY_THRESHOLD && time - lastArcTime > ARC_COOLDOWN) {
-    lastArcTime = time;
-    const arcSize = isTransient ? 6 : Math.max(3, ve * 5);
-    spawnArc(viewer, compassBearing, time, color, arcSize,
-      isTransient ? ARC_ANGULAR_WIDTH + 20 : ARC_ANGULAR_WIDTH);
-  }
-  updateArcs(viewer, time);
-
-  // ─── Trail dots ───
-  if (state.showDOA && time - lastTrailTime > TRAIL_INTERVAL) {
+  // ─── Trail dots (ring buffer) ───
+  if (state.showDOA && trailInited && time - lastTrailTime > TRAIL_INTERVAL) {
     lastTrailTime = time;
     const trailDist = TRAIL_DIST_MIN + ve * (TRAIL_DIST_MAX - TRAIL_DIST_MIN);
     const dotSize = Math.max(2, 3 + ve * 6);
-    const entity = viewer.entities.add({
-      position: groundPos(dirE * trailDist, dirN * trailDist),
-      point: {
-        pixelSize: dotSize,
-        color: trailColor(ve),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-      },
-    });
-    doaTrailPoints.push({ entity, time });
-    while (doaTrailPoints.length > MAX_TRAIL) {
-      const old = doaTrailPoints.shift();
-      try { viewer.entities.remove(old.entity); } catch (e) {}
-    }
+    const dot = trailDots[trailIdx];
+    dot.position = groundPos(dirE * trailDist, dirN * trailDist);
+    dot.point.pixelSize = dotSize;
+    dot.point.color = trailColor(ve);
+    dot.show = true;
+    trailIdx = (trailIdx + 1) % MAX_TRAIL;
   }
 }
 
-// ─── Arcs ───
+/**
+ * Draw bearing line on the 2D canvas overlay.
+ * Called on every Cesium postRender — converts world positions to screen coords.
+ */
+function drawBearingLine() {
+  if (!bearingCtx || !_viewer) return;
+  const w = bearingCanvas.width, h = bearingCanvas.height;
+  bearingCtx.clearRect(0, 0, w, h);
 
-function spawnArc(viewer, compassBearing, birthTime, color, dotSize, angularWidth) {
-  const dotCount = 8;
-  const entities = [];
-  const halfWidth = angularWidth / 2;
-  for (let i = 0; i <= dotCount; i++) {
-    const angleDeg = compassBearing - halfWidth + (angularWidth * i / dotCount);
-    const enuAngle = (90 - angleDeg) * Math.PI / 180;
-    entities.push(viewer.entities.add({
-      position: groundPos(Math.cos(enuAngle) * 2, Math.sin(enuAngle) * 2),
-      point: {
-        pixelSize: dotSize,
-        color: color,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-      },
-    }));
+  // Debug: always draw a small red dot to prove the canvas renders
+  bearingCtx.fillStyle = 'red';
+  bearingCtx.fillRect(w - 30, 10, 20, 20);
+
+  if (!currentBearing.active) return;
+
+  const { dirE, dirN, compass, ve, bands } = currentBearing;
+  const lineLen = BEARING_LEN_MIN + ve * (BEARING_LEN_MAX - BEARING_LEN_MIN);
+  const lineWidth = BEARING_WIDTH_MIN + ve * (BEARING_WIDTH_MAX - BEARING_WIDTH_MIN);
+
+  // Convert listener position to screen coordinates
+  const listenerWorld = Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat);
+  const tipWorld = groundPos(dirE * lineLen, dirN * lineLen);
+  const startScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, listenerWorld);
+  const endScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, tipWorld);
+
+  // Debug: log first successful conversion
+  if (startScreen && !drawBearingLine._logged) {
+    console.log('[DOA-VIS] Screen coords: start=' + startScreen.x.toFixed(0) + ',' + startScreen.y.toFixed(0) +
+      ' end=' + (endScreen ? endScreen.x.toFixed(0) + ',' + endScreen.y.toFixed(0) : 'null'));
+    drawBearingLine._logged = true;
   }
-  activeArcs.push({ entities, birthTime, compassBearing, angularWidth, color });
-  while (activeArcs.length > MAX_ARCS) {
-    const old = activeArcs.shift();
-    old.entities.forEach(e => { try { viewer.entities.remove(e); } catch (ex) {} });
+
+  if (!startScreen || !endScreen) return;
+
+  // ─── Primary bearing line ───
+  const color = energyColor(ve);
+
+  // Black outline
+  bearingCtx.beginPath();
+  bearingCtx.moveTo(startScreen.x, startScreen.y);
+  bearingCtx.lineTo(endScreen.x, endScreen.y);
+  bearingCtx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+  bearingCtx.lineWidth = lineWidth + 3;
+  bearingCtx.lineCap = 'round';
+  bearingCtx.stroke();
+
+  // Colored fill
+  bearingCtx.beginPath();
+  bearingCtx.moveTo(startScreen.x, startScreen.y);
+  bearingCtx.lineTo(endScreen.x, endScreen.y);
+  bearingCtx.strokeStyle = color;
+  bearingCtx.lineWidth = lineWidth;
+  bearingCtx.lineCap = 'round';
+  bearingCtx.stroke();
+
+  // Arrowhead at tip
+  const dx = endScreen.x - startScreen.x;
+  const dy = endScreen.y - startScreen.y;
+  const angle = Math.atan2(dy, dx);
+  const headLen = 10 + ve * 6;
+  bearingCtx.beginPath();
+  bearingCtx.moveTo(endScreen.x, endScreen.y);
+  bearingCtx.lineTo(endScreen.x - headLen * Math.cos(angle - 0.4), endScreen.y - headLen * Math.sin(angle - 0.4));
+  bearingCtx.moveTo(endScreen.x, endScreen.y);
+  bearingCtx.lineTo(endScreen.x - headLen * Math.cos(angle + 0.4), endScreen.y - headLen * Math.sin(angle + 0.4));
+  bearingCtx.strokeStyle = color;
+  bearingCtx.lineWidth = Math.max(2, lineWidth * 0.7);
+  bearingCtx.stroke();
+
+  // Bearing label
+  bearingCtx.font = 'bold 13px JetBrains Mono, monospace';
+  bearingCtx.textAlign = 'center';
+  const labelX = endScreen.x + Math.cos(angle) * 16;
+  const labelY = endScreen.y + Math.sin(angle) * 16;
+  bearingCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+  bearingCtx.lineWidth = 4;
+  bearingCtx.strokeText(compass.toFixed(0) + '\u00B0', labelX, labelY);
+  bearingCtx.fillStyle = color;
+  bearingCtx.fillText(compass.toFixed(0) + '\u00B0', labelX, labelY);
+
+  // ─── Band indicators (only during transients) ───
+  if (bands) {
+    drawBandLine(bands.low, 'rgba(255, 60, 60, 0.8)', 'LO', listenerWorld);
+    drawBandLine(bands.high, 'rgba(0, 220, 255, 0.8)', 'HI', listenerWorld);
   }
 }
 
-function updateArcs(viewer, currentTime) {
-  const toRemove = [];
-  for (const arc of activeArcs) {
-    const elapsed = currentTime - arc.birthTime;
-    const radiusM = elapsed * 349 * 0.12;
-    if (radiusM > ARC_MAX_RADIUS || elapsed > ARC_LIFETIME) {
-      toRemove.push(arc);
-      continue;
-    }
-    const fade = Math.max(0, 1 - elapsed / ARC_LIFETIME);
-    const halfWidth = arc.angularWidth / 2;
-    const r = Math.max(1, radiusM);
-    for (let i = 0; i < arc.entities.length; i++) {
-      const angleDeg = arc.compassBearing - halfWidth + (arc.angularWidth * i / (arc.entities.length - 1));
-      const enuAngle = (90 - angleDeg) * Math.PI / 180;
-      arc.entities[i].position = groundPos(Math.cos(enuAngle) * r, Math.sin(enuAngle) * r);
-      arc.entities[i].point.color = arc.color.withAlpha(fade * 0.7);
-    }
-  }
-  for (const arc of toRemove) {
-    arc.entities.forEach(e => { try { viewer.entities.remove(e); } catch (ex) {} });
-    const idx = activeArcs.indexOf(arc);
-    if (idx >= 0) activeArcs.splice(idx, 1);
-  }
+function drawBandLine(band, color, label, startWorld) {
+  if (!band || band.energy < 1e-6) return;
+  const bandVe = Math.min(1, Math.max(0, (Math.log10(band.energy + 1e-10) + 6) / 6));
+  if (bandVe < 0.15) return;
+
+  const { east: bDirE, north: bDirN, compass: bCompass } = ambiXToENU(band.azimuth, 0);
+  const lineLen = 8 + bandVe * 10;
+  const endWorld = groundPos(bDirE * lineLen, bDirN * lineLen);
+
+  const startScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, startWorld);
+  const endScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, endWorld);
+  if (!startScreen || !endScreen) return;
+
+  // Dashed line
+  bearingCtx.setLineDash([6, 4]);
+  bearingCtx.beginPath();
+  bearingCtx.moveTo(startScreen.x, startScreen.y);
+  bearingCtx.lineTo(endScreen.x, endScreen.y);
+  bearingCtx.strokeStyle = color;
+  bearingCtx.lineWidth = 2;
+  bearingCtx.stroke();
+  bearingCtx.setLineDash([]);
+
+  // Label
+  bearingCtx.font = 'bold 10px JetBrains Mono, monospace';
+  bearingCtx.fillStyle = color;
+  bearingCtx.fillText(`${label} ${bCompass.toFixed(0)}\u00B0`, endScreen.x + 8, endScreen.y - 4);
 }
 
 // ─── Visibility ───
 
 export function hideAll() {
-  bearingDots.forEach(d => d.show = false);
-  if (bearingLabelEntity) bearingLabelEntity.show = false;
+  currentBearing.active = false;
 }
 
 export function clearDOATrail(viewer) {
-  doaTrailPoints.forEach(p => {
-    try { viewer.entities.remove(p.entity); } catch (e) {}
-  });
-  doaTrailPoints = [];
+  trailDots.forEach(d => d.show = false);
+  trailIdx = 0;
   lastTrailTime = -1;
-  lastUpdateTime = -1;
-  lastArcTime = -1;
   prevEnergy = 0;
-
-  activeArcs.forEach(arc => {
-    arc.entities.forEach(e => { try { viewer.entities.remove(e); } catch (ex) {} });
-  });
-  activeArcs = [];
-
-  hideAll();
+  currentBearing.active = false;
 }
