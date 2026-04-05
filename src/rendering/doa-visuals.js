@@ -90,7 +90,7 @@ export function initDOAVisuals(viewer) {
   // Appended to body (not cesiumContainer — Cesium manages that div's children)
   bearingCanvas = document.createElement('canvas');
   bearingCanvas.id = 'doa-bearing-canvas';
-  bearingCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9;';
+  bearingCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:1000;';
   document.body.appendChild(bearingCanvas);
   bearingCtx = bearingCanvas.getContext('2d');
 
