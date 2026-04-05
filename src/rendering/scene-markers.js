@@ -32,8 +32,6 @@ const MICS = [
   { name: 'IMG_9820',    lat: 40.2774423, lon: -111.7138657 },
 ];
 
-const MUZZLE = { name: 'Muzzle Position', lat: 40.2775597, lon: -111.7139567 };
-
 /**
  * Add all scene markers to the viewer, clamped to ground
  */

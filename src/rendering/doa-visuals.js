@@ -33,6 +33,7 @@ const TRAIL_INTERVAL = 0.08;
 
 // ─── State ───
 let _viewer = null;
+let _sceneHeight = 0; // WGS84 ellipsoid height at listener, sampled once
 let bearingCanvas = null;
 let bearingCtx = null;
 let trailDots = [];
@@ -45,8 +46,13 @@ let currentBearing = { dirE: 0, dirN: 0, compass: 0, ve: 0, active: false };
 function groundPos(eastM, northM) {
   return Cesium.Cartesian3.fromDegrees(
     state.listener.lon + eastM * LON_DEG_PER_METER,
-    state.listener.lat + northM * LAT_DEG_PER_METER
+    state.listener.lat + northM * LAT_DEG_PER_METER,
+    _sceneHeight
   );
+}
+
+function listenerCartesian() {
+  return Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat, _sceneHeight);
 }
 
 function energyColor(e) {
@@ -84,7 +90,18 @@ function trailColor(e) {
 
 export function initDOAVisuals(viewer) {
   _viewer = viewer;
-  const listenerPos = Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat);
+
+  // Sample the scene height at listener position for worldToWindowCoordinates
+  try {
+    const carto = Cesium.Cartographic.fromDegrees(state.listener.lon, state.listener.lat);
+    const h = viewer.scene.sampleHeight(carto);
+    _sceneHeight = (h !== undefined && h > 0) ? h : 1363;
+  } catch (e) {
+    _sceneHeight = 1363;
+  }
+  console.log('[DOA-VIS] Scene height: ' + _sceneHeight.toFixed(1) + 'm');
+
+  const listenerPos = listenerCartesian();
 
   // Create transparent canvas overlay for the bearing line
   // Appended to body (not cesiumContainer — Cesium manages that div's children)
@@ -160,28 +177,17 @@ function drawBearingLine() {
   const w = bearingCanvas.width, h = bearingCanvas.height;
   bearingCtx.clearRect(0, 0, w, h);
 
-  // Debug: always draw a small red dot to prove the canvas renders
-  bearingCtx.fillStyle = 'red';
-  bearingCtx.fillRect(w - 30, 10, 20, 20);
-
   if (!currentBearing.active) return;
 
   const { dirE, dirN, compass, ve, bands } = currentBearing;
   const lineLen = BEARING_LEN_MIN + ve * (BEARING_LEN_MAX - BEARING_LEN_MIN);
   const lineWidth = BEARING_WIDTH_MIN + ve * (BEARING_WIDTH_MAX - BEARING_WIDTH_MIN);
 
-  // Convert listener position to screen coordinates
-  const listenerWorld = Cesium.Cartesian3.fromDegrees(state.listener.lon, state.listener.lat);
+  // Convert world positions (at scene height) to screen coordinates
+  const startWorld = listenerCartesian();
   const tipWorld = groundPos(dirE * lineLen, dirN * lineLen);
-  const startScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, listenerWorld);
+  const startScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, startWorld);
   const endScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, tipWorld);
-
-  // Debug: log first successful conversion
-  if (startScreen && !drawBearingLine._logged) {
-    console.log('[DOA-VIS] Screen coords: start=' + startScreen.x.toFixed(0) + ',' + startScreen.y.toFixed(0) +
-      ' end=' + (endScreen ? endScreen.x.toFixed(0) + ',' + endScreen.y.toFixed(0) : 'null'));
-    drawBearingLine._logged = true;
-  }
 
   if (!startScreen || !endScreen) return;
 
@@ -233,8 +239,8 @@ function drawBearingLine() {
 
   // ─── Band indicators (only during transients) ───
   if (bands) {
-    drawBandLine(bands.low, 'rgba(255, 60, 60, 0.8)', 'LO', listenerWorld);
-    drawBandLine(bands.high, 'rgba(0, 220, 255, 0.8)', 'HI', listenerWorld);
+    drawBandLine(bands.low, 'rgba(255, 60, 60, 0.8)', 'LO', startWorld);
+    drawBandLine(bands.high, 'rgba(0, 220, 255, 0.8)', 'HI', startWorld);
   }
 }
 
