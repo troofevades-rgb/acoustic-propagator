@@ -129,30 +129,64 @@ export function ambiXToENU(azimuthRad, time) {
   };
 }
 
-// ─── IIR filters ───
+// ─── 2nd-order Butterworth biquad filters (12dB/octave) ───
+// Coefficients from Robert Bristow-Johnson Audio EQ Cookbook
+// Q = 1/sqrt(2) ≈ 0.7071 for Butterworth (maximally flat passband)
+
 function highpass(input, sr, freq) {
   const out = new Float32Array(input.length);
-  const rc = 1.0 / (2.0 * Math.PI * freq);
-  const dt = 1.0 / sr;
-  const alpha = rc / (rc + dt);
-  let prevIn = 0, prevOut = 0;
+  const Q = Math.SQRT1_2; // 0.7071 — Butterworth
+  const w0 = 2 * Math.PI * freq / sr;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * Q);
+
+  const b0 = (1 + cosw0) / 2;
+  const b1 = -(1 + cosw0);
+  const b2 = (1 + cosw0) / 2;
+  const a0 = 1 + alpha;
+  const a1 = -2 * cosw0;
+  const a2 = 1 - alpha;
+
+  // Normalize by a0
+  const nb0 = b0 / a0, nb1 = b1 / a0, nb2 = b2 / a0;
+  const na1 = a1 / a0, na2 = a2 / a0;
+
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
   for (let i = 0; i < input.length; i++) {
-    out[i] = alpha * (prevOut + input[i] - prevIn);
-    prevIn = input[i];
-    prevOut = out[i];
+    const x0 = input[i];
+    out[i] = nb0 * x0 + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2;
+    x2 = x1; x1 = x0;
+    y2 = y1; y1 = out[i];
   }
   return out;
 }
 
 function lowpass(input, sr, freq) {
   const out = new Float32Array(input.length);
-  const rc = 1.0 / (2.0 * Math.PI * freq);
-  const dt = 1.0 / sr;
-  const alpha = dt / (rc + dt);
-  let prev = 0;
+  const Q = Math.SQRT1_2; // 0.7071 — Butterworth
+  const w0 = 2 * Math.PI * freq / sr;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * Q);
+
+  const b0 = (1 - cosw0) / 2;
+  const b1 = 1 - cosw0;
+  const b2 = (1 - cosw0) / 2;
+  const a0 = 1 + alpha;
+  const a1 = -2 * cosw0;
+  const a2 = 1 - alpha;
+
+  // Normalize by a0
+  const nb0 = b0 / a0, nb1 = b1 / a0, nb2 = b2 / a0;
+  const na1 = a1 / a0, na2 = a2 / a0;
+
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
   for (let i = 0; i < input.length; i++) {
-    prev += alpha * (input[i] - prev);
-    out[i] = prev;
+    const x0 = input[i];
+    out[i] = nb0 * x0 + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2;
+    x2 = x1; x1 = x0;
+    y2 = y1; y1 = out[i];
   }
   return out;
 }

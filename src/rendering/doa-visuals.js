@@ -237,40 +237,137 @@ function drawBearingLine() {
   bearingCtx.fillStyle = color;
   bearingCtx.fillText(compass.toFixed(0) + '\u00B0', labelX, labelY);
 
-  // ─── Band indicators (only during transients) ───
+  // ─── Frequency-dependent band bearing lines (during transients) ───
   if (bands) {
-    drawBandLine(bands.low, 'rgba(255, 60, 60, 0.8)', 'LO', startWorld);
-    drawBandLine(bands.high, 'rgba(0, 220, 255, 0.8)', 'HI', startWorld);
+    // Compute total band energy for proportional width scaling
+    const totalBandEnergy =
+      (bands.low ? bands.low.energy : 0) +
+      (bands.mid ? bands.mid.energy : 0) +
+      (bands.high ? bands.high.energy : 0);
+
+    // LOW (80-500Hz): thick blue line
+    drawBandBearingLine(bands.low, {
+      color: 'rgba(40, 120, 255, 0.85)',
+      label: 'LOW 80-500Hz',
+      baseWidth: 5,
+      totalBandEnergy,
+      startWorld,
+    });
+    // MID (500-3kHz): medium green line
+    drawBandBearingLine(bands.mid, {
+      color: 'rgba(40, 220, 80, 0.85)',
+      label: 'MID 0.5-3kHz',
+      baseWidth: 3.5,
+      totalBandEnergy,
+      startWorld,
+    });
+    // HIGH (3-10kHz): thin red line
+    drawBandBearingLine(bands.high, {
+      color: 'rgba(255, 60, 60, 0.85)',
+      label: 'HIGH 3-10kHz',
+      baseWidth: 2,
+      totalBandEnergy,
+      startWorld,
+    });
+
+    // Draw legend when band data is visible
+    drawBandLegend(bands);
   }
 }
 
-function drawBandLine(band, color, label, startWorld) {
+/**
+ * Draw a single frequency-band bearing line with energy-proportional width.
+ */
+function drawBandBearingLine(band, opts) {
   if (!band || band.energy < 1e-6) return;
   const bandVe = Math.min(1, Math.max(0, (Math.log10(band.energy + 1e-10) + 6) / 6));
-  if (bandVe < 0.15) return;
+  if (bandVe < 0.10) return;
+
+  const { color, label, baseWidth, totalBandEnergy, startWorld } = opts;
+
+  // Width is proportional to this band's share of total energy
+  const energyFrac = totalBandEnergy > 1e-10 ? band.energy / totalBandEnergy : 0.33;
+  const lineWidth = baseWidth * (0.5 + energyFrac * 1.5);
 
   const { east: bDirE, north: bDirN, compass: bCompass } = ambiXToENU(band.azimuth, 0);
-  const lineLen = 8 + bandVe * 10;
+  const lineLen = 8 + bandVe * 12;
   const endWorld = groundPos(bDirE * lineLen, bDirN * lineLen);
 
   const startScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, startWorld);
   const endScreen = Cesium.SceneTransforms.worldToWindowCoordinates(_viewer.scene, endWorld);
   if (!startScreen || !endScreen) return;
 
-  // Dashed line
-  bearingCtx.setLineDash([6, 4]);
+  // Black outline for contrast
+  bearingCtx.setLineDash([]);
+  bearingCtx.beginPath();
+  bearingCtx.moveTo(startScreen.x, startScreen.y);
+  bearingCtx.lineTo(endScreen.x, endScreen.y);
+  bearingCtx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+  bearingCtx.lineWidth = lineWidth + 2;
+  bearingCtx.lineCap = 'round';
+  bearingCtx.stroke();
+
+  // Colored bearing line (solid)
   bearingCtx.beginPath();
   bearingCtx.moveTo(startScreen.x, startScreen.y);
   bearingCtx.lineTo(endScreen.x, endScreen.y);
   bearingCtx.strokeStyle = color;
-  bearingCtx.lineWidth = 2;
+  bearingCtx.lineWidth = lineWidth;
+  bearingCtx.lineCap = 'round';
   bearingCtx.stroke();
-  bearingCtx.setLineDash([]);
 
-  // Label
+  // Bearing label at tip
   bearingCtx.font = 'bold 10px JetBrains Mono, monospace';
+  bearingCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+  bearingCtx.lineWidth = 3;
+  bearingCtx.strokeText(`${bCompass.toFixed(0)}\u00B0`, endScreen.x + 8, endScreen.y - 4);
   bearingCtx.fillStyle = color;
-  bearingCtx.fillText(`${label} ${bCompass.toFixed(0)}\u00B0`, endScreen.x + 8, endScreen.y - 4);
+  bearingCtx.fillText(`${bCompass.toFixed(0)}\u00B0`, endScreen.x + 8, endScreen.y - 4);
+}
+
+/**
+ * Draw a corner legend showing which color maps to which frequency band.
+ * Only shown when band data is present and at least one band is active.
+ */
+function drawBandLegend(bands) {
+  const activeBands = [];
+  if (bands.low && bands.low.energy > 1e-6) activeBands.push({ label: 'LOW  80-500Hz', color: 'rgba(40, 120, 255, 0.9)' });
+  if (bands.mid && bands.mid.energy > 1e-6) activeBands.push({ label: 'MID  0.5-3kHz', color: 'rgba(40, 220, 80, 0.9)' });
+  if (bands.high && bands.high.energy > 1e-6) activeBands.push({ label: 'HIGH 3-10kHz', color: 'rgba(255, 60, 60, 0.9)' });
+  if (activeBands.length === 0) return;
+
+  const x = 14;
+  const y = 60;
+  const rowH = 16;
+  const pad = 6;
+  const boxW = 140;
+  const boxH = pad * 2 + activeBands.length * rowH + 14;
+
+  // Background box
+  bearingCtx.fillStyle = 'rgba(10, 14, 23, 0.85)';
+  bearingCtx.strokeStyle = 'rgba(35, 53, 84, 0.8)';
+  bearingCtx.lineWidth = 1;
+  bearingCtx.beginPath();
+  bearingCtx.roundRect(x, y, boxW, boxH, 4);
+  bearingCtx.fill();
+  bearingCtx.stroke();
+
+  // Title
+  bearingCtx.font = 'bold 8px JetBrains Mono, monospace';
+  bearingCtx.fillStyle = 'rgba(204, 214, 246, 0.8)';
+  bearingCtx.fillText('FREQ BANDS', x + pad, y + pad + 8);
+
+  // Band entries
+  bearingCtx.font = '9px JetBrains Mono, monospace';
+  for (let i = 0; i < activeBands.length; i++) {
+    const ey = y + pad + 16 + i * rowH;
+    // Color swatch
+    bearingCtx.fillStyle = activeBands[i].color;
+    bearingCtx.fillRect(x + pad, ey, 10, 10);
+    // Label
+    bearingCtx.fillStyle = 'rgba(136, 146, 176, 0.9)';
+    bearingCtx.fillText(activeBands[i].label, x + pad + 16, ey + 9);
+  }
 }
 
 // ─── Visibility ───

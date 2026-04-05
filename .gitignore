@@ -5,4 +5,3 @@ out/
 public/cesium/
 .env
 *.log
-{src,assets}/

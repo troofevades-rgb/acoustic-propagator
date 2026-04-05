@@ -229,11 +229,15 @@ export function setView(viewName) {
       );
       Cesium.Cartesian3.normalize(direction, direction);
 
+      // Use ENU frame at listener to get local east/north components
+      const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(lisCart);
+      const invTransform = Cesium.Matrix4.inverse(enuTransform, new Cesium.Matrix4());
+      const localDir = Cesium.Matrix4.multiplyByPointAsVector(
+        invTransform, direction, new Cesium.Cartesian3()
+      );
+      // atan2(east, north) gives heading clockwise from north
       const heading = Cesium.Math.toDegrees(
-        Cesium.Cartesian3.angleBetween(
-          new Cesium.Cartesian3(0, 1, 0),
-          new Cesium.Cartesian3(direction.x, direction.y, 0)
-        )
+        Math.atan2(localDir.x, localDir.y)
       );
 
       viewer.camera.flyTo({

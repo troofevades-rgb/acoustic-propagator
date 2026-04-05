@@ -11,6 +11,7 @@ import { state, getSerializableState, restoreState } from './core/state.js';
 import { computeSpeedOfSound } from './core/physics.js';
 import { parseWav } from './core/wav-parser.js';
 import { computeDOATrack, ambiXToCompass } from './core/ambisonics.js';
+import { HEADING_TRACK } from './core/heading-track.js';
 import { SpatialAudioEngine } from './core/spatial-audio.js';
 import { initWavefrontPools, renderWavefronts } from './rendering/wavefronts.js';
 import { initParticleSystem, updateParticles, updateParticlePosition } from './rendering/particles.js';
@@ -25,7 +26,7 @@ import {
   toggleSpectrogramMode,
 } from './rendering/ui/timeline.js';
 import { bindInputs, setControlCallbacks, setView } from './rendering/ui/controls.js';
-import { exportSession, startRecording, stopRecording } from './core/export.js';
+import { exportSession, exportDOATrack, startRecording, stopRecording } from './core/export.js';
 import { initCompass } from './rendering/ui/compass.js';
 import { initMarkerDrag } from './rendering/ui/marker-drag.js';
 import { createSceneMarkers } from './rendering/scene-markers.js';
@@ -54,10 +55,12 @@ async function init() {
     }
   }
 
-  // Safeguard: force listener to Mic 7 position (stale config may have wrong coords)
-  state.listener.lat = 40.2776602;
-  state.listener.lon = -111.7140867;
-  state.listener.height = 1.0;
+  // Set default listener position only if restored config doesn't have valid coordinates
+  if (!state.listener.lat || !state.listener.lon) {
+    state.listener.lat = 40.2776602;
+    state.listener.lon = -111.7140867;
+    state.listener.height = 1.0;
+  }
 
   // Ensure critical visual layers default to ON
   state.showDOA = true;
@@ -91,9 +94,8 @@ async function init() {
   createSceneMarkers(viewer);
 
   // Visual systems
-  // initWavefrontPools — DISABLED: creates 90 pooled entities that corrupt
-  // Cesium's rendering pipeline for all entities added afterward.
-  // renderWavefronts() is never called, so the pool is unused.
+  // NOTE: initWavefrontPools() is intentionally disabled — it creates pooled
+  // entities that conflict with Cesium's rendering pipeline (see wavefronts.js).
   initDOAVisuals(viewer);
   initParticleSystem(viewer);
   initCompass(viewer);
@@ -278,6 +280,54 @@ function handleInputChange() {
   }
 }
 
+// ─── DOA Worker helper ───
+function computeDOAInWorker(channels, sampleRate, analysisRate, headingTrackData, calPointsData) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL('./core/doa-worker.js', import.meta.url),
+      { type: 'classic' }
+    );
+
+    // Copy channel data into transferable ArrayBuffers
+    const buffers = channels.map(ch => {
+      const copy = new Float32Array(ch.length);
+      copy.set(ch);
+      return copy.buffer;
+    });
+
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress') {
+        const doaDisplay = document.getElementById('doaDisplay');
+        if (doaDisplay) {
+          const stage = msg.stage || '';
+          doaDisplay.innerHTML = `<span class="dim">Computing DOA... ${msg.percent}% — ${stage}</span>`;
+        }
+      } else if (msg.type === 'done') {
+        worker.terminate();
+        resolve(msg.track);
+      } else if (msg.type === 'error') {
+        worker.terminate();
+        reject(new Error(msg.message));
+      }
+    };
+
+    worker.onerror = (e) => {
+      worker.terminate();
+      reject(new Error(e.message || 'Worker error'));
+    };
+
+    // Post with Transferable ArrayBuffers (zero-copy)
+    worker.postMessage({
+      channels: buffers,
+      sampleRate,
+      analysisRate,
+      headingTrackData,
+      calPointsData,
+    }, buffers);
+  });
+}
+
 // ─── WAV loading ───
 async function handleLoadWav() {
   let fileData;
@@ -354,29 +404,53 @@ async function handleLoadWav() {
       }
     }
 
-    // Compute DOA track if 4-channel B-format
+    // Compute DOA track if 4-channel B-format (via Web Worker)
     if (wav.numChannels >= 4) {
-      doaTrack = computeDOATrack(wav.channels, wav.sampleRate);
-      console.log('DOA track computed:', doaTrack.length, 'frames');
-
-      // Log DOA track statistics (loop-based to avoid stack overflow on large tracks)
-      if (doaTrack.length > 0) {
-        let minAz = Infinity, maxAz = -Infinity, maxE = 0, peakIdx = 0;
-        for (let i = 0; i < doaTrack.length; i++) {
-          const azDeg = doaTrack[i].azimuth * 180 / Math.PI;
-          if (azDeg < minAz) minAz = azDeg;
-          if (azDeg > maxAz) maxAz = azDeg;
-          if (doaTrack[i].energy > maxE) { maxE = doaTrack[i].energy; peakIdx = i; }
-        }
-        const peakDoa = doaTrack[peakIdx];
-        const peakCompass = ambiXToCompass(peakDoa.azimuth, peakDoa.time);
-        console.log(`[DOA] Azimuth range: ${minAz.toFixed(1)}° to ${maxAz.toFixed(1)}°`);
-        console.log(`[DOA] Peak energy at t=${peakDoa.time.toFixed(2)}s, compass bearing=${peakCompass.toFixed(1)}°`);
-      }
-
       const doaDisplay = document.getElementById('doaDisplay');
       if (doaDisplay) {
-        doaDisplay.innerHTML = `<span class="accent">${doaTrack.length}</span> DOA frames computed — press PLAY`;
+        doaDisplay.innerHTML = '<span class="dim">Computing DOA... 0%</span>';
+      }
+
+      // Calibration points needed by the worker's heading logic
+      const calPointsData = [
+        { time: 25.37, heading: 131.4 },
+        { time: 120.0, heading: 241.3 },
+      ];
+
+      try {
+        doaTrack = await computeDOAInWorker(wav.channels, wav.sampleRate, 200, HEADING_TRACK, calPointsData);
+        console.log('DOA track computed:', doaTrack.length, 'frames');
+
+        // Log DOA track statistics
+        if (doaTrack.length > 0) {
+          let minAz = Infinity, maxAz = -Infinity, maxE = 0, peakIdx = 0;
+          for (let i = 0; i < doaTrack.length; i++) {
+            const azDeg = doaTrack[i].azimuth * 180 / Math.PI;
+            if (azDeg < minAz) minAz = azDeg;
+            if (azDeg > maxAz) maxAz = azDeg;
+            if (doaTrack[i].energy > maxE) { maxE = doaTrack[i].energy; peakIdx = i; }
+          }
+          const peakDoa = doaTrack[peakIdx];
+          const peakCompass = ambiXToCompass(peakDoa.azimuth, peakDoa.time);
+          console.log(`[DOA] Azimuth range: ${minAz.toFixed(1)}° to ${maxAz.toFixed(1)}°`);
+          console.log(`[DOA] Peak energy at t=${peakDoa.time.toFixed(2)}s, compass bearing=${peakCompass.toFixed(1)}°`);
+        }
+
+        if (doaDisplay) {
+          doaDisplay.innerHTML = `<span class="accent">${doaTrack.length}</span> DOA frames computed — press PLAY`;
+        }
+      } catch (err) {
+        console.error('[DOA Worker] Error:', err);
+        // Fallback to synchronous computation
+        console.log('[DOA] Falling back to main-thread computation');
+        if (doaDisplay) {
+          doaDisplay.innerHTML = '<span class="dim">Computing DOA (main thread)...</span>';
+        }
+        doaTrack = computeDOATrack(wav.channels, wav.sampleRate);
+        console.log('DOA track computed (fallback):', doaTrack.length, 'frames');
+        if (doaDisplay) {
+          doaDisplay.innerHTML = `<span class="accent">${doaTrack.length}</span> DOA frames computed — press PLAY`;
+        }
       }
     } else {
       doaTrack = null;
@@ -470,6 +544,29 @@ function bindSessionButtons(viewer) {
         btnRecord.textContent = '■ STOP REC';
         btnRecord.classList.add('active');
       }
+    });
+  }
+
+  // DOA track export buttons
+  const btnExportDOA = document.getElementById('btnExportDOA');
+  if (btnExportDOA) {
+    btnExportDOA.addEventListener('click', () => {
+      if (!doaTrack || doaTrack.length === 0) {
+        console.warn('No DOA track data — load a B-format WAV first');
+        return;
+      }
+      exportDOATrack(doaTrack, 'csv');
+    });
+  }
+
+  const btnExportDOAJson = document.getElementById('btnExportDOAJson');
+  if (btnExportDOAJson) {
+    btnExportDOAJson.addEventListener('click', () => {
+      if (!doaTrack || doaTrack.length === 0) {
+        console.warn('No DOA track data — load a B-format WAV first');
+        return;
+      }
+      exportDOATrack(doaTrack, 'json');
     });
   }
 }

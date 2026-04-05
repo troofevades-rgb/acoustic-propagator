@@ -56,7 +56,7 @@ export default defineConfig({
           build: {
             outDir: path.resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'electron-store'],
+              external: ['electron'],
             },
           },
         },

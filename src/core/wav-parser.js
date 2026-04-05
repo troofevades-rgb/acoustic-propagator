@@ -6,6 +6,21 @@
 
 export function parseWav(buffer) {
   const view = new DataView(buffer);
+
+  // Validate RIFF/WAVE header
+  const riffTag = String.fromCharCode(
+    view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)
+  );
+  const waveTag = String.fromCharCode(
+    view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11)
+  );
+  if (riffTag !== 'RIFF') {
+    throw new Error(`Not a WAV file: expected "RIFF" at offset 0, got "${riffTag}"`);
+  }
+  if (waveTag !== 'WAVE') {
+    throw new Error(`Not a WAV file: expected "WAVE" at offset 8, got "${waveTag}"`);
+  }
+
   let offset = 12;
   let fmt = null;
   let dataStart = 0;
@@ -21,11 +36,26 @@ export function parseWav(buffer) {
     const size = view.getUint32(offset + 4, true);
 
     if (id === 'fmt ') {
+      const formatCode = view.getUint16(offset + 8, true);
+      const channels = view.getUint16(offset + 10, true);
+      const sampleRate = view.getUint32(offset + 12, true);
+      const bitsPerSample = view.getUint16(offset + 22, true);
+
+      let actualFormat = formatCode;
+
+      // Handle WAVE_FORMAT_EXTENSIBLE (0xFFFE)
+      if (formatCode === 0xFFFE && size >= 40) {
+        // cbSize is at offset+24 (2 bytes), validBitsPerSample at offset+26 (2 bytes),
+        // channelMask at offset+28 (4 bytes), subformat GUID starts at offset+32 (16 bytes).
+        // The first 2 bytes of the subformat GUID contain the actual format code.
+        actualFormat = view.getUint16(offset + 32, true);
+      }
+
       fmt = {
-        format: view.getUint16(offset + 8, true),
-        channels: view.getUint16(offset + 10, true),
-        sampleRate: view.getUint32(offset + 12, true),
-        bitsPerSample: view.getUint16(offset + 22, true),
+        format: actualFormat,
+        channels,
+        sampleRate,
+        bitsPerSample,
       };
     } else if (id === 'data') {
       dataStart = offset + 8;

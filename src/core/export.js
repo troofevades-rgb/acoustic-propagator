@@ -91,6 +91,79 @@ export function startRecording(viewer, audioCtx, audioDestination) {
 }
 
 /**
+ * Export DOA track data as CSV or JSON and trigger a download.
+ * @param {Array} doaTrack — array of DOA frame objects from computeDOATrack
+ * @param {'csv'|'json'} format — output format
+ */
+export async function exportDOATrack(doaTrack, format = 'csv') {
+  if (!doaTrack || doaTrack.length === 0) {
+    console.warn('[EXPORT] No DOA track data to export');
+    return;
+  }
+
+  let blob, filename;
+
+  if (format === 'json') {
+    const json = JSON.stringify(doaTrack, null, 2);
+    blob = new Blob([json], { type: 'application/json' });
+    filename = `doa-track-${Date.now()}.json`;
+  } else {
+    // CSV
+    const headers = [
+      'time_s', 'azimuth_deg', 'elevation_deg', 'energy',
+      'compass_bearing', 'onset',
+      'band_low_az', 'band_mid_az', 'band_high_az',
+    ];
+    const lines = [headers.join(',')];
+
+    for (const frame of doaTrack) {
+      const azDeg = (frame.azimuth * 180 / Math.PI).toFixed(4);
+      const elDeg = (frame.elevation * 180 / Math.PI).toFixed(4);
+      const energy = frame.energy.toExponential(6);
+      const compass = frame.compass != null ? frame.compass.toFixed(2) : '';
+      const onset = frame.onset ? '1' : '0';
+
+      let bandLowAz = '', bandMidAz = '', bandHighAz = '';
+      if (frame.bands) {
+        if (frame.bands.low) bandLowAz = (frame.bands.low.azimuth * 180 / Math.PI).toFixed(4);
+        if (frame.bands.mid) bandMidAz = (frame.bands.mid.azimuth * 180 / Math.PI).toFixed(4);
+        if (frame.bands.high) bandHighAz = (frame.bands.high.azimuth * 180 / Math.PI).toFixed(4);
+      }
+
+      lines.push([
+        frame.time.toFixed(6), azDeg, elDeg, energy,
+        compass, onset,
+        bandLowAz, bandMidAz, bandHighAz,
+      ].join(','));
+    }
+
+    blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    filename = `doa-track-${Date.now()}.csv`;
+  }
+
+  // Use Electron save dialog if available, otherwise browser download
+  if (window.electronAPI) {
+    try {
+      const text = await blob.text();
+      const data = format === 'json'
+        ? JSON.parse(text)
+        : text;
+      await window.electronAPI.saveSession(data);
+      return;
+    } catch (e) {
+      console.warn('[EXPORT] Electron save failed, falling back to browser download:', e);
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/**
  * Stop video recording
  */
 export function stopRecording() {

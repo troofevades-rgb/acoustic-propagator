@@ -498,9 +498,12 @@ function estimateSurfaceNormal(viewer, hitPoint, incomingDirection) {
 }
 
 function quantizePosition(src, lis) {
-  const q = CONFIG.rayCacheQuantization;
-  const qSrc = `${Math.round(src.lat / q) * q},${Math.round(src.lon / q) * q}`;
-  const qLis = `${Math.round(lis.lat / q) * q},${Math.round(lis.lon / q) * q}`;
+  const q = CONFIG.rayCacheQuantization; // meters
+  const mPerDegLat = 111320;
+  const mPerDegLonSrc = 111320 * Math.cos(src.lat * Math.PI / 180);
+  const mPerDegLonLis = 111320 * Math.cos(lis.lat * Math.PI / 180);
+  const qSrc = `${Math.round(src.lat * mPerDegLat / q) * q},${Math.round(src.lon * mPerDegLonSrc / q) * q}`;
+  const qLis = `${Math.round(lis.lat * mPerDegLat / q) * q},${Math.round(lis.lon * mPerDegLonLis / q) * q}`;
   return `${qSrc}|${qLis}`;
 }
 

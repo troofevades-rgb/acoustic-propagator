@@ -9,9 +9,11 @@
     "preview": "vite preview",
     "start": "electron dist-electron/main.js"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "cesium": "^1.121.0",
-    "electron-store": "^10.0.0"
+    "cesium": "^1.121.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",
